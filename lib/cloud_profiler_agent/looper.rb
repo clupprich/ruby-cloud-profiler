@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'google/apis/errors'
+# require 'google/apis/errors'
 
 module CloudProfilerAgent
   # Looper is responsible for the main loop of the agent. It calls a
@@ -42,22 +42,23 @@ module CloudProfilerAgent
         iterations += 1
         begin
           yield
-        rescue ::Google::Apis::ClientError => e
-          backoff = backoff_duration(e)
-          if backoff.nil?
-            iteration_time = @max_iteration_sec
-          else
-            debug_log("sleeping for #{backoff} at request of server")
-            # This might be longer than max_iteration_sec and that's OK: with
-            # a very large number of agents it might be necessary to achieve
-            # the objective of 1 profile per minute.
-            @sleeper.call(backoff)
-            iteration_time = @min_iteration_sec
-          end
+        # rescue ::Google::Apis::ClientError => e
+        #   backoff = backoff_duration(e)
+        #   if backoff.nil?
+        #     iteration_time = @max_iteration_sec
+        #   else
+        #     debug_log("sleeping for #{backoff} at request of server")
+        #     # This might be longer than max_iteration_sec and that's OK: with
+        #     # a very large number of agents it might be necessary to achieve
+        #     # the objective of 1 profile per minute.
+        #     @sleeper.call(backoff)
+        #     iteration_time = @min_iteration_sec
+        #   end
         rescue StandardError => e
           iteration_time *= @backoff_factor + @rander.call / 2
           elapsed = @clock.call - start_time
           debug_log("Cloud Profiler agent encountered error after #{elapsed} seconds, will retry: #{e.inspect}")
+          debug_log(e.backtrace)
         else
           iteration_time = @min_iteration_sec
         end

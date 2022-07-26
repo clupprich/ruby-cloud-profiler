@@ -1,19 +1,15 @@
 # frozen_string_literal: true
 
-require 'google/apis/cloudprofiler_v2'
-require 'googleauth'
+require 'google/cloud/profiler'
 require 'stackprof'
 
 module CloudProfilerAgent
-  Cloudprofiler = Google::Apis::CloudprofilerV2
-
   PROFILE_TYPES = {
     'CPU' => :cpu,
     'WALL' => :wall,
     'HEAP_ALLOC' => :object
   }.freeze
   SERVICE_REGEXP = /^[a-z]([-a-z0-9_.]{0,253}[a-z0-9])?$/.freeze
-  SCOPES = ['https://www.googleapis.com/auth/cloud-platform'].freeze
 
   # Agent interfaces with the CloudProfiler API.
   class Agent
@@ -24,44 +20,25 @@ module CloudProfilerAgent
       @project_id = project_id
       @debug_logging = debug_logging
 
+      @profiler = Google::Cloud::Profiler.profiler_service
+
       @labels = { language: 'ruby' }
       @labels[:version] = service_version unless service_version.nil?
       @labels[:zone] = zone unless zone.nil?
 
-      @deployment = Cloudprofiler::Deployment.new(project_id: project_id, target: service, labels: @labels)
+      @deployment = Google::Cloud::Profiler::V2::Deployment.new(project_id: project_id, target: service, labels: @labels)
 
       @profile_labels = {}
       @profile_labels[:instance] = instance unless instance.nil?
-
-      @profiler = Cloudprofiler::CloudProfilerService.new
-      @profiler.authorization = Google::Auth.get_application_default(SCOPES)
-
-      # <https://github.com/googleapis/googleapis/blob/7e17784e6465431981f36806e6376d69de1fc424/google/devtools/cloudprofiler/v2/profiler.proto#L39-L45>
-      #
-      #   The request may fail with ABORTED error if the creation is not
-      #   available within ~1m, the response will indicate the duration of the
-      #   backoff the client should take before attempting creating a profile
-      #   again. The backoff duration is returned in google.rpc.RetryInfo
-      #   extension on the response status. To a gRPC client, the extension
-      #   will be return as a binary-serialized proto in the trailing metadata
-      #   item named "google.rpc.retryinfo-bin".
-      #
-      # Unfortunately, it's unclear how this maps to the JSON API as used by
-      # Google::Apis. Some guess is made: see Looper#backoff_duration.
-      #
-      # However, emperical testing shows that if what appears to be this
-      # throttling message occurs, it happens as late as 230 seconds, not 1
-      # minute as the documentation suggests. So, we must increase the timeout.
-      @profiler.client_options.read_timeout_sec = 300
     end
 
     attr_reader :service, :project_id, :labels, :deployment, :profile_labels
 
     def create_profile
-      req = Cloudprofiler::CreateProfileRequest.new(deployment: deployment, profile_type: PROFILE_TYPES.keys)
+      req = Google::Cloud::Profiler::V2::CreateProfileRequest.new(deployment: deployment, profile_type: PROFILE_TYPES.keys)
       debug_log('creating profile')
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      profile = @profiler.create_profile("projects/#{deployment.project_id}", req)
+      profile = @profiler.create_profile(req)
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
       debug_log("got profile after #{elapsed} seconds")
       profile
@@ -69,7 +46,8 @@ module CloudProfilerAgent
 
     def update_profile(profile)
       debug_log('updating profile')
-      @profiler.patch_project_profile(profile.name, profile)
+      req = Google::Cloud::Profiler::V2::UpdateProfileRequest.new(profile: profile)
+      @profiler.update_profile(req)
       debug_log('profile updated')
     end
 
@@ -112,7 +90,7 @@ module CloudProfilerAgent
 
     def profile_and_upload(profile)
       debug_log("profiling #{profile.profile_type} for #{profile.duration}")
-      profile.profile_bytes = profile(parse_duration(profile.duration), PROFILE_TYPES.fetch(profile.profile_type))
+      profile.profile_bytes = profile(parse_duration(profile.duration.to_s), PROFILE_TYPES.fetch(profile.profile_type.to_s))
       update_profile(profile)
     end
 
